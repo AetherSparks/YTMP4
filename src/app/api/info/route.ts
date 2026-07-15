@@ -18,8 +18,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ video });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
+    const stack = error instanceof Error ? error.stack : undefined;
     return NextResponse.json(
-      { error: `Failed to get video info: ${message}` },
+      { error: `Failed to get video info: ${message}`, detail: stack },
       { status: 500 }
     );
   }

@@ -15,26 +15,32 @@ const commonOptions: ytdl.downloadOptions = {
       'Sec-Fetch-Mode': 'navigate',
     },
   },
+  playerClients: ['WEB_EMBEDDED', 'TV'],
 };
+
+const RETRY_DELAYS = [5000, 15000, 30000];
 
 async function fetchWithRetry<T>(
   fn: () => Promise<T>,
-  maxRetries = 3,
 ): Promise<T> {
-  for (let attempt = 0; attempt < maxRetries; attempt++) {
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt < RETRY_DELAYS.length; attempt++) {
     try {
       return await fn();
     } catch (err: unknown) {
+      lastError = err;
       const message = err instanceof Error ? err.message : '';
-      if (message.includes('429') && attempt < maxRetries - 1) {
-        const delay = (attempt + 1) * 3000;
+      if (message.includes('429') || message.includes('Status code')) {
+        const delay = RETRY_DELAYS[attempt];
         await new Promise((r) => setTimeout(r, delay));
         continue;
       }
       throw err;
     }
   }
-  throw new Error('Max retries exceeded');
+
+  throw lastError;
 }
 
 export function sanitizeFilename(name: string): string {

@@ -30,7 +30,7 @@ export default function Home() {
 
       const data = await res.json();
 
-      if (!res.ok) throw new Error(data.error || 'Failed to fetch video info');
+      if (!res.ok) throw new Error(data.detail ? `${data.error}\n\n${data.detail}` : data.error);
 
       setVideo(data.video);
       const combined = data.video.formats.find((f: { needsFfmpeg: boolean }) => !f.needsFfmpeg);
@@ -57,7 +57,7 @@ export default function Home() {
 
       if (!res.ok) {
         const data = await res.json();
-        throw new Error(data.error || 'Download failed');
+        throw new Error(data.detail ? `${data.error}\n\n${data.detail}` : data.error);
       }
 
       const blob = await res.blob();
@@ -108,9 +108,10 @@ export default function Home() {
           />
 
           {error && (
-            <div className="bg-red-900/30 border border-red-800/50 text-red-400 text-sm rounded-lg p-3">
-              {error}
-            </div>
+            <details className="bg-red-900/30 border border-red-800/50 text-red-400 text-sm rounded-lg p-3">
+              <summary className="cursor-pointer font-medium">Error</summary>
+              <pre className="mt-2 whitespace-pre-wrap font-mono text-xs leading-relaxed">{error}</pre>
+            </details>
           )}
 
           {video && (
