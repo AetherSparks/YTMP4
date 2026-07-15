@@ -1,6 +1,6 @@
 import ytdl from '@distube/ytdl-core';
-import { spawn } from 'child_process';
-import { Readable, Writable } from 'stream';
+import { exec as ytdlExec } from 'youtube-dl-exec';
+import { Readable } from 'stream';
 import type { FormatInfo, VideoMetadata } from './youtube';
 
 const USER_AGENT =
@@ -20,9 +20,7 @@ const commonOptions: ytdl.downloadOptions = {
 
 const RETRY_DELAYS = [5000, 15000, 30000];
 
-async function fetchWithRetry<T>(
-  fn: () => Promise<T>,
-): Promise<T> {
+async function fetchWithRetry<T>(fn: () => Promise<T>): Promise<T> {
   let lastError: unknown;
 
   for (let attempt = 0; attempt < RETRY_DELAYS.length; attempt++) {
@@ -32,8 +30,7 @@ async function fetchWithRetry<T>(
       lastError = err;
       const message = err instanceof Error ? err.message : '';
       if (message.includes('429') || message.includes('Status code')) {
-        const delay = RETRY_DELAYS[attempt];
-        await new Promise((r) => setTimeout(r, delay));
+        await new Promise((r) => setTimeout(r, RETRY_DELAYS[attempt]));
         continue;
       }
       throw err;
@@ -109,20 +106,7 @@ export function validateUrl(url: string): boolean {
   return ytdl.validateURL(url);
 }
 
-export async function createCombinedStream(
-  url: string,
-  itag?: number,
-): Promise<ReadableStream> {
-  const stream = itag
-    ? ytdl(url, { ...commonOptions, quality: itag })
-    : ytdl(url, {
-        ...commonOptions,
-        quality: 'highest',
-        filter: 'audioandvideo',
-      });
-
-  const nodeStream = stream as unknown as Readable;
-
+function nodeStreamToWeb(nodeStream: Readable): ReadableStream {
   return new ReadableStream({
     start(controller) {
       nodeStream.on('data', (chunk: Buffer) => controller.enqueue(chunk));
@@ -135,85 +119,26 @@ export async function createCombinedStream(
   });
 }
 
-export async function createFfmpegStream(
+export async function createDownloadStream(
   url: string,
-): Promise<{
-  stream: ReadableStream;
-  contentLength: Promise<number | null>;
-}> {
-  const videoStream = ytdl(url, {
-    ...commonOptions,
-    quality: 'highestvideo',
-    filter: 'videoonly',
-  }) as unknown as Readable;
+  quality: string,
+): Promise<ReadableStream> {
+  const height = parseInt(quality.replace('p', ''));
 
-  const audioStream = ytdl(url, {
-    ...commonOptions,
-    quality: 'highestaudio',
-    filter: 'audioonly',
-  }) as unknown as Readable;
+  const isHD = height > 720;
 
-  const ffmpeg = spawn(
-    'ffmpeg',
-    [
-      '-i',
-      'pipe:3',
-      '-i',
-      'pipe:4',
-      '-map',
-      '0:v',
-      '-map',
-      '1:a',
-      '-c:v',
-      'copy',
-      '-c:a',
-      'aac',
-      '-movflags',
-      'frag_keyframe+empty_moov',
-      '-f',
-      'mp4',
-      'pipe:1',
-    ],
-    {
-      stdio: ['pipe', 'pipe', 'pipe', 'pipe', 'pipe'],
-    },
-  );
+  const format = isHD
+    ? `bestvideo[height<=${height}][ext=mp4]+bestaudio[ext=m4a]/best[height<=${height}][ext=mp4]`
+    : `best[height<=${height}][ext=mp4]`;
 
-  videoStream.pipe(ffmpeg.stdio[3] as Writable);
-  audioStream.pipe(ffmpeg.stdio[4] as Writable);
-
-  const stdout = ffmpeg.stdio[1] as Readable;
-
-  const stream = new ReadableStream({
-    start(controller) {
-      stdout.on('data', (chunk: Buffer) => controller.enqueue(chunk));
-      stdout.on('end', () => controller.close());
-      stdout.on('error', (err) => controller.error(err));
-    },
-    cancel() {
-      videoStream.destroy();
-      audioStream.destroy();
-      ffmpeg.kill();
-    },
+  const child = ytdlExec(url, {
+    format,
+    output: '-',
+    mergeOutputFormat: 'mp4',
+    noPart: true,
+    noProgress: true,
+    quiet: true,
   });
 
-  const contentLength = new Promise<number | null>((resolve) => {
-    setTimeout(() => {
-      const v = videoStream as unknown as {
-        response?: { headers?: Record<string, string> };
-      };
-      const a = audioStream as unknown as {
-        response?: { headers?: Record<string, string> };
-      };
-      const videoSize = parseInt(
-        v.response?.headers?.['content-length'] || '0',
-      );
-      const audioSize = parseInt(
-        a.response?.headers?.['content-length'] || '0',
-      );
-      resolve(videoSize + audioSize > 0 ? videoSize + audioSize : null);
-    }, 2000);
-  });
-
-  return { stream, contentLength };
+  return nodeStreamToWeb(child.stdout as unknown as Readable);
 }

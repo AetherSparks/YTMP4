@@ -3,6 +3,7 @@ FROM node:20-alpine AS deps
 WORKDIR /app
 
 COPY package*.json ./
+ENV YOUTUBE_DL_SKIP_PYTHON_CHECK=1
 RUN npm ci
 
 FROM node:20-alpine AS builder
